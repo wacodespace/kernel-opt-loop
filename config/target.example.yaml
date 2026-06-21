@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Target definition for one kernel-optimization loop.
+# Copy to config/target.yaml and edit. target.yaml is gitignored.
+#
+# Every field here is read by scripts/lib.sh. Nothing is hardcoded in scripts.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# --- Where the code under optimization lives (this repo stays OUT of that tree) ---
+project:
+  # Absolute path to the repo you are optimizing.
+  root: /opt/aiter
+  # PYTHONPATH to export when running the benchmark (often == root).
+  pythonpath: /opt/aiter
+
+# --- GPU / toolchain ---
+gpu:
+  arch: gfx942            # used for llvm-objdump --mcpu and sanity checks
+  product: MI308X         # informational; confirmed against rocminfo at env-check
+  visible_device: "0"     # exported as HIP_VISIBLE_DEVICES
+
+toolchain:
+  # Leave as command names to resolve from PATH, or pin to absolute paths.
+  hipcc: hipcc
+  rocprof_compute: rocprof-compute
+  rocprofv3: rocprofv3
+  llvm_objdump: /opt/rocm/lib/llvm/bin/llvm-objdump
+  rocminfo: rocminfo
+
+# --- The benchmark to drive the kernel ---
+# This command is run verbatim (after env vars are prepended). It must:
+#   1. print a runtime number we can grep, and
+#   2. trigger compilation of the kernel under study.
+benchmark:
+  cmd: >-
+    python3 op_tests/op_benchmarks/triton/bench_mha.py
+    -fn fwd -b 1 -hq 32 -hk 32 -sq 1024 -sk 1024 -d 128
+    -causal true --dtype bf16 -impl default -metric time
+  # Regex with one capture group that extracts the milliseconds figure from stdout.
+  # For bench_mha the last whitespace-separated field on the data row is ms.
+  runtime_regex: '([0-9]+\.[0-9]+)\s*$'
+  # Optional separate correctness check command. Empty = skip (HITL must vouch).
+  correctness_cmd: ""
+
+# --- Kernel identification inside profiler / triton cache ---
+kernel:
+  # Substring that identifies the hot kernel in rocprof-compute output and in
+  # the triton cache filenames. For Triton MHA fwd this is the function name.
+  name_match: "_attn_fwd"
+  # Where Triton drops compiled artifacts. {hash} subdir holds the .hsaco.
+  triton_cache_dir: "~/.triton/cache"
+
+# --- ISA instruction patterns to count (the AMD bottleneck fingerprint) ---
+# Each entry is a label -> regex. 04_isa_counts.sh greps the disassembly.
+isa_patterns:
+  scratch:       'scratch_'
+  buffer_load:   'buffer_load'
+  buffer_store:  'buffer_store'
+  global_load:   'global_load'
+  global_store:  'global_store'
+  flat_load:     'flat_load'
+  flat_store:    'flat_store'
+  ds_read:       'ds_read'
+  ds_write:      'ds_write'
+  v_mfma:        'v_mfma'
+  v_mac:         'v_mac'
+  s_waitcnt:     's_waitcnt'
+  s_barrier:     's_barrier'
+
+# --- Acceptance thresholds for the verdict (agent + human read these) ---
+thresholds:
+  # Runtime delta below -improve_pct is "improved"; above +regress_pct is "regressed".
+  improve_pct: 2.0
+  regress_pct: 2.0
+  # A change introducing scratch (spill) is always flagged regardless of runtime.
+  fail_on_new_scratch: true

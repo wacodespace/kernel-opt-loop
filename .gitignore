@@ -1,0 +1,11 @@
+# Local config — never commit a concrete target
+config/target.yaml
+
+# Experiment artifacts can get large (ISA dumps, workloads). Keep the dir,
+# ignore contents by default; un-ignore specific runs you want to keep.
+experiments/*
+!experiments/.gitkeep
+
+# Triton / rocprof scratch
+*.hsaco
+__pycache__/
